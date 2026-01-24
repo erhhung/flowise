@@ -45,8 +45,10 @@ export abstract class BaseCommand extends Command {
         DATABASE_NAME: Flags.string(),
         DATABASE_USER: Flags.string(),
         DATABASE_PASSWORD: Flags.string(),
-        DATABASE_SSL: Flags.string(),
-        DATABASE_SSL_KEY_BASE64: Flags.string(),
+        DATABASE_TLS: Flags.string(),
+        DATABASE_CERT: Flags.string(),
+        DATABASE_KEY: Flags.string(),
+        DATABASE_CA: Flags.string(),
         DATABASE_REJECT_UNAUTHORIZED: Flags.string(),
 
         // Langsmith tracing
@@ -95,6 +97,7 @@ export abstract class BaseCommand extends Command {
         REDIS_URL: Flags.string(),
         REDIS_HOST: Flags.string(),
         REDIS_PORT: Flags.string(),
+        REDIS_CLUSTER: Flags.string(),
         REDIS_USERNAME: Flags.string(),
         REDIS_PASSWORD: Flags.string(),
         REDIS_TLS: Flags.string(),

@@ -109,13 +109,22 @@ export function getDataSource(): DataSource {
 }
 
 export const getDatabaseSSLFromEnv = () => {
-    if (process.env.DATABASE_SSL_KEY_BASE64) {
-        return {
-            rejectUnauthorized: process.env.DATABASE_REJECT_UNAUTHORIZED === 'true',
-            ca: Buffer.from(process.env.DATABASE_SSL_KEY_BASE64, 'base64')
-        }
-    } else if (process.env.DATABASE_SSL === 'true') {
+    if (process.env.DATABASE_TLS !== 'true') {
+        return undefined
+    }
+    if (!process.env.DATABASE_CERT &&
+        !process.env.DATABASE_CA) {
         return true
     }
-    return undefined
+    let tlsOptions : any = {
+        rejectUnauthorized: false
+    }
+    if (process.env.DATABASE_CERT && process.env.DATABASE_KEY) {
+        tlsOptions.cert = Buffer.from(process.env.DATABASE_CERT, 'base64')
+        tlsOptions.key = Buffer.from(process.env.DATABASE_KEY, 'base64')
+    }
+    if (process.env.DATABASE_CA) {
+        tlsOptions.ca = Buffer.from(process.env.DATABASE_CA, 'base64')
+    }
+    return tlsOptions
 }

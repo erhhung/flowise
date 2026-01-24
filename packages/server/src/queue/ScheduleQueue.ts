@@ -1,4 +1,4 @@
-import { RedisOptions, RepeatOptions } from 'bullmq'
+import { ConnectionOptions, RepeatOptions } from 'bullmq'
 import { BaseQueue } from './BaseQueue'
 import { ScheduleRecord } from '../database/entities/ScheduleRecord'
 import { IComponentNodes } from '../Interface'
@@ -41,7 +41,7 @@ export class ScheduleQueue extends BaseQueue {
     private redisPublisher: RedisEventPublisher
     private queueName: string
 
-    constructor(name: string, connection: RedisOptions, options: ScheduleQueueOptions) {
+    constructor(name: string, connection: ConnectionOptions, options: ScheduleQueueOptions) {
         super(name, connection)
         this.queueName = name
         this.componentNodes = options.componentNodes || {}

@@ -6,7 +6,7 @@ import { CachePool } from '../CachePool'
 import { RedisEventPublisher } from './RedisEventPublisher'
 import { AbortControllerPool } from '../AbortControllerPool'
 import { BaseQueue } from './BaseQueue'
-import { RedisOptions } from 'bullmq'
+import { ConnectionOptions } from 'bullmq'
 import { UsageCacheManager } from '../UsageCacheManager'
 import logger from '../utils/logger'
 import { generateAgentflowv2 as generateAgentflowv2_json } from 'flowise-components'
@@ -41,7 +41,7 @@ export class PredictionQueue extends BaseQueue {
     private redisPublisher: RedisEventPublisher
     private queueName: string
 
-    constructor(name: string, connection: RedisOptions, options: PredictionQueueOptions) {
+    constructor(name: string, connection: ConnectionOptions, options: PredictionQueueOptions) {
         super(name, connection)
         this.queueName = name
         this.componentNodes = options.componentNodes || {}

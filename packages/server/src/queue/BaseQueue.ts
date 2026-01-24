@@ -1,4 +1,4 @@
-import { Queue, Worker, Job, QueueEvents, RedisOptions, KeepJobs } from 'bullmq'
+import { Queue, Worker, Job, QueueEvents, ConnectionOptions, KeepJobs } from 'bullmq'
 import { v4 as uuidv4 } from 'uuid'
 import logger from '../utils/logger'
 
@@ -12,10 +12,10 @@ const REMOVE_ON_COUNT = process.env.REMOVE_ON_COUNT ? parseInt(process.env.REMOV
 export abstract class BaseQueue {
     protected queue: Queue
     protected queueEvents: QueueEvents
-    protected connection: RedisOptions
+    protected connection: ConnectionOptions
     private worker: Worker
 
-    constructor(queueName: string, connection: RedisOptions) {
+    constructor(queueName: string, connection: ConnectionOptions) {
         this.connection = connection
         this.queue = new Queue(queueName, {
             connection: this.connection,

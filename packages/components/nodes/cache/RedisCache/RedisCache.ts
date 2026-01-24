@@ -1,4 +1,4 @@
-import { Redis } from 'ioredis'
+import { Redis, Cluster } from 'ioredis'
 import hash from 'object-hash'
 import { RedisCache as LangchainRedisCache } from '@langchain/community/caches/ioredis'
 import { StoredGeneration, mapStoredMessageToChatMessage } from '@langchain/core/messages'
@@ -106,24 +106,34 @@ class RedisCache implements INode {
         return redisClient
     }
 }
-const getRedisClient = async (nodeData: INodeData, options: ICommonObject) => {
-    let client: Redis
 
+const getRedisClient = async (nodeData: INodeData, options: ICommonObject) => {
     const credentialData = await getCredentialData(nodeData.credential ?? '', options)
     const redisUrl = getCredentialParam('redisUrl', credentialData, nodeData)
+    let client: Redis | Cluster
 
     if (!redisUrl || redisUrl === '') {
         const username = getCredentialParam('redisCacheUser', credentialData, nodeData)
         const password = getCredentialParam('redisCachePwd', credentialData, nodeData)
         const portStr = getCredentialParam('redisCachePort', credentialData, nodeData)
         const host = getCredentialParam('redisCacheHost', credentialData, nodeData)
-        const sslEnabled = getCredentialParam('redisCacheSslEnabled', credentialData, nodeData)
 
-        const tlsOptions = sslEnabled === true ? { tls: { rejectUnauthorized: false } } : {}
+        // const sslEnabled = getCredentialParam('redisCacheSslEnabled', credentialData, nodeData)
+        const sslEnabled = process.env.REDIS_TLS === 'true'
+        const tlsOptions = sslEnabled ? {
+            tls: {
+                rejectUnauthorized: false,
+                cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
+                key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
+                ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined,
+            }
+        } : {}
 
-        client = new Redis({
+        const redisNode = {
             port: portStr ? parseInt(portStr) : 6379,
             host,
+        }
+        const redisOptions = {
             username,
             password,
             keepAlive:
@@ -131,7 +141,18 @@ const getRedisClient = async (nodeData: INodeData, options: ICommonObject) => {
                     ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
                     : undefined,
             ...tlsOptions
-        })
+        }
+        if (process.env.REDIS_CLUSTER === 'true') {
+            client = new Cluster(
+                [redisNode],
+                {redisOptions},
+            )
+        } else {
+            client = new Redis({
+                ...redisNode,
+                ...redisOptions,
+            })
+        }
     } else {
         client = new Redis(redisUrl, {
             keepAlive:
@@ -141,8 +162,9 @@ const getRedisClient = async (nodeData: INodeData, options: ICommonObject) => {
         })
     }
 
-    return client
+    return client as Redis // probably won't work if Cluster
 }
+
 const getCacheKey = (...strings: string[]): string => hash(strings.join('_'))
 const deserializeStoredGeneration = (storedGeneration: StoredGeneration) => {
     if (storedGeneration.message !== undefined) {

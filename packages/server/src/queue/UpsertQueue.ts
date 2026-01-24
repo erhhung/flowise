@@ -12,7 +12,7 @@ import { CachePool } from '../CachePool'
 import { BaseQueue } from './BaseQueue'
 import { executeUpsert } from '../utils/upsertVector'
 import { executeDocStoreUpsert, insertIntoVectorStore, previewChunks, processLoader } from '../services/documentstore'
-import { RedisOptions } from 'bullmq'
+import { ConnectionOptions } from 'bullmq'
 import logger from '../utils/logger'
 import { UsageCacheManager } from '../UsageCacheManager'
 
@@ -32,7 +32,7 @@ export class UpsertQueue extends BaseQueue {
     private usageCacheManager: UsageCacheManager
     private queueName: string
 
-    constructor(name: string, connection: RedisOptions, options: UpsertQueueOptions) {
+    constructor(name: string, connection: ConnectionOptions, options: UpsertQueueOptions) {
         super(name, connection)
         this.queueName = name
         this.componentNodes = options.componentNodes || {}

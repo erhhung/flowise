@@ -1,4 +1,4 @@
-import { Redis } from 'ioredis'
+import { Redis, Cluster } from 'ioredis'
 import { RedisByteStore } from '@langchain/community/storage/ioredis'
 import { Embeddings, EmbeddingsInterface } from '@langchain/core/embeddings'
 import { CacheBackedEmbeddingsFields } from '@langchain/classic/embeddings/cache_backed'
@@ -67,20 +67,30 @@ class RedisEmbeddingsCache implements INode {
 
         const credentialData = await getCredentialData(nodeData.credential ?? '', options)
         const redisUrl = getCredentialParam('redisUrl', credentialData, nodeData)
+        let client: Redis | Cluster
 
-        let client: Redis
         if (!redisUrl || redisUrl === '') {
             const username = getCredentialParam('redisCacheUser', credentialData, nodeData)
             const password = getCredentialParam('redisCachePwd', credentialData, nodeData)
             const portStr = getCredentialParam('redisCachePort', credentialData, nodeData)
             const host = getCredentialParam('redisCacheHost', credentialData, nodeData)
-            const sslEnabled = getCredentialParam('redisCacheSslEnabled', credentialData, nodeData)
 
-            const tlsOptions = sslEnabled === true ? { tls: { rejectUnauthorized: false } } : {}
+            // const sslEnabled = getCredentialParam('redisCacheSslEnabled', credentialData, nodeData)
+            const sslEnabled = process.env.REDIS_TLS === 'true'
+            const tlsOptions = sslEnabled ? {
+                tls: {
+                    rejectUnauthorized: false,
+                    cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
+                    key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
+                    ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined,
+                }
+            } : {}
 
-            client = new Redis({
+            const redisNode = {
                 port: portStr ? parseInt(portStr) : 6379,
                 host,
+            }
+            const redisOptions = {
                 username,
                 password,
                 keepAlive:
@@ -88,7 +98,18 @@ class RedisEmbeddingsCache implements INode {
                         ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
                         : undefined,
                 ...tlsOptions
-            })
+            }
+            if (process.env.REDIS_CLUSTER === 'true') {
+                client = new Cluster(
+                    [redisNode],
+                    {redisOptions},
+                )
+            } else {
+                client = new Redis({
+                    ...redisNode,
+                    ...redisOptions,
+                })
+            }
         } else {
             client = new Redis(redisUrl, {
                 keepAlive:
@@ -101,13 +122,13 @@ class RedisEmbeddingsCache implements INode {
         ttl ??= '3600'
         let ttlNumber = parseInt(ttl, 10)
         const redisStore = new RedisByteStore({
-            client: client,
+            client: client as Redis, // probably won't work if Cluster
             ttl: ttlNumber
         })
 
         const store = CacheBackedEmbeddings.fromBytesStore(underlyingEmbeddings, redisStore, {
-            namespace: namespace,
-            redisClient: client
+            namespace,
+            redisClient: client as Redis // probably won't work if Cluster
         })
 
         return store

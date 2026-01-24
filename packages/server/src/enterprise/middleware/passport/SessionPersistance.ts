@@ -1,4 +1,4 @@
-import Redis from 'ioredis'
+import { Redis, Cluster } from 'ioredis'
 import { RedisStore } from 'connect-redis'
 import { getDatabaseSSLFromEnv } from '../../../DataSource'
 import path from 'path'
@@ -7,27 +7,51 @@ import type { Store } from 'express-session'
 import { LoginSession } from '../../database/entities/login-session.entity'
 import { getRunningExpressApp } from '../../../utils/getRunningExpressApp'
 
-let redisClient: Redis | null = null
+let redisClient: Redis | Cluster | null = null
 let redisStore: RedisStore | null = null
 let dbStore: Store | null = null
 
 export const initializeRedisClientAndStore = (): RedisStore => {
     if (!redisClient) {
-        if (process.env.REDIS_URL) {
-            redisClient = new Redis(process.env.REDIS_URL)
-        } else {
-            redisClient = new Redis({
-                host: process.env.REDIS_HOST || 'localhost',
+        if (!process.env.REDIS_URL) {
+            const redisNode = {
                 port: parseInt(process.env.REDIS_PORT || '6379'),
+                host: process.env.REDIS_HOST || 'localhost',
+            }
+            const sslEnabled = process.env.REDIS_TLS === 'true'
+            const tlsOptions = sslEnabled ? {
+                tls: {
+                    rejectUnauthorized: false,
+                    cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
+                    key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
+                    ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined,
+                }
+            } : {}
+            const redisOptions = {
                 username: process.env.REDIS_USERNAME || undefined,
                 password: process.env.REDIS_PASSWORD || undefined,
-                tls:
-                    process.env.REDIS_TLS === 'true'
-                        ? {
-                              cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
-                              key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
-                              ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined
-                          }
+                keepAlive:
+                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+                        : undefined,
+                ...tlsOptions
+            }
+            if (process.env.REDIS_CLUSTER === 'true') {
+                redisClient = new Cluster(
+                    [redisNode],
+                    {redisOptions},
+                )
+            } else {
+                redisClient = new Redis({
+                    ...redisNode,
+                    ...redisOptions,
+                })
+            }
+        } else {
+            redisClient = new Redis(process.env.REDIS_URL, {
+                keepAlive:
+                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
                         : undefined
             })
         }
@@ -118,10 +142,7 @@ export const destroyAllSessionsForUser = async (userId: string): Promise<void> =
             const keysToDelete: string[] = []
             const batchSize = 1000
 
-            const stream = redisClient.scanStream({
-                match: pattern,
-                count: batchSize
-            })
+            const stream = redisClient.sscanStream(pattern, { count: batchSize })
 
             for await (const keysBatch of stream) {
                 if (keysBatch.length === 0) continue

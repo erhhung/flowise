@@ -1,46 +1,64 @@
 import { IActiveCache, MODE } from './Interface'
-import Redis from 'ioredis'
+import { Redis, Cluster } from 'ioredis'
 
 /**
  * This pool is to keep track of in-memory cache used for LLM and Embeddings
  */
 export class CachePool {
-    private redisClient: Redis | null = null
+    private redisClient: Redis | Cluster | null = null
     activeLLMCache: IActiveCache = {}
     activeEmbeddingCache: IActiveCache = {}
     activeMCPCache: { [key: string]: any } = {}
     ssoTokenCache: { [key: string]: any } = {}
 
     constructor() {
-        if (process.env.MODE === MODE.QUEUE) {
-            if (process.env.REDIS_URL) {
-                this.redisClient = new Redis(process.env.REDIS_URL, {
-                    keepAlive:
-                        process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
-                            ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
-                            : undefined
-                })
+        if (process.env.MODE !== MODE.QUEUE) {
+            return;
+        }
+        let client: Redis | Cluster
+        if (!process.env.REDIS_URL) {
+            const redisNode = {
+                port: parseInt(process.env.REDIS_PORT || '6379'),
+                host: process.env.REDIS_HOST || 'localhost',
+            }
+            const sslEnabled = process.env.REDIS_TLS === 'true'
+            const tlsOptions = sslEnabled ? {
+                tls: {
+                    rejectUnauthorized: false,
+                    cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
+                    key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
+                    ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined,
+                }
+            } : {}
+            const redisOptions = {
+                username: process.env.REDIS_USERNAME || undefined,
+                password: process.env.REDIS_PASSWORD || undefined,
+                keepAlive:
+                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+                        : undefined,
+                ...tlsOptions
+            }
+            if (process.env.REDIS_CLUSTER === 'true') {
+                client = new Cluster(
+                    [redisNode],
+                    {redisOptions},
+                )
             } else {
-                this.redisClient = new Redis({
-                    host: process.env.REDIS_HOST || 'localhost',
-                    port: parseInt(process.env.REDIS_PORT || '6379'),
-                    username: process.env.REDIS_USERNAME || undefined,
-                    password: process.env.REDIS_PASSWORD || undefined,
-                    tls:
-                        process.env.REDIS_TLS === 'true'
-                            ? {
-                                  cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
-                                  key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
-                                  ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined
-                              }
-                            : undefined,
-                    keepAlive:
-                        process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
-                            ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
-                            : undefined
+                client = new Redis({
+                    ...redisNode,
+                    ...redisOptions,
                 })
             }
+        } else {
+            client = new Redis(process.env.REDIS_URL, {
+                keepAlive:
+                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+                        : undefined
+            })
         }
+        this.redisClient = client
     }
 
     /**

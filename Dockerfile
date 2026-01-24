@@ -13,6 +13,7 @@ RUN apk update && \
     python3 \
     make \
     g++ \
+    git \
     build-base \
     cairo-dev \
     pango-dev \

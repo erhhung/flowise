@@ -3,7 +3,7 @@ import { rateLimit, RateLimitRequestHandler } from 'express-rate-limit'
 import { IChatFlow, MODE } from '../Interface'
 import { Mutex } from 'async-mutex'
 import { RedisStore } from 'rate-limit-redis'
-import Redis from 'ioredis'
+import { Redis, Cluster } from 'ioredis'
 import { QueueEvents, QueueEventsListener, QueueEventsProducer } from 'bullmq'
 
 interface CustomListener extends QueueEventsListener {
@@ -16,43 +16,61 @@ const QUEUE_EVENT_NAME = 'updateRateLimiter'
 export class RateLimiterManager {
     private rateLimiters: Map<string, RateLimitRequestHandler> = new Map()
     private rateLimiterMutex: Mutex = new Mutex()
-    private redisClient: Redis
+    private redisClient: Redis | Cluster
     private static instance: RateLimiterManager
     private queueEventsProducer: QueueEventsProducer
     private queueEvents: QueueEvents
 
     constructor() {
-        if (process.env.MODE === MODE.QUEUE) {
-            if (process.env.REDIS_URL) {
-                this.redisClient = new Redis(process.env.REDIS_URL, {
-                    keepAlive:
-                        process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
-                            ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
-                            : undefined
-                })
+        if (process.env.MODE !== MODE.QUEUE) {
+            return;
+        }
+        let client: Redis | Cluster
+        if (!process.env.REDIS_URL) {
+            const redisNode = {
+                port: parseInt(process.env.REDIS_PORT || '6379'),
+                host: process.env.REDIS_HOST || 'localhost',
+            }
+            const sslEnabled = process.env.REDIS_TLS === 'true'
+            const tlsOptions = sslEnabled ? {
+                tls: {
+                    rejectUnauthorized: false,
+                    cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
+                    key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
+                    ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined,
+                }
+            } : {}
+            const redisOptions = {
+                username: process.env.REDIS_USERNAME || undefined,
+                password: process.env.REDIS_PASSWORD || undefined,
+                keepAlive:
+                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+                        : undefined,
+                ...tlsOptions
+            }
+            if (process.env.REDIS_CLUSTER === 'true') {
+                client = new Cluster(
+                    [redisNode],
+                    {redisOptions},
+                )
             } else {
-                this.redisClient = new Redis({
-                    host: process.env.REDIS_HOST || 'localhost',
-                    port: parseInt(process.env.REDIS_PORT || '6379'),
-                    username: process.env.REDIS_USERNAME || undefined,
-                    password: process.env.REDIS_PASSWORD || undefined,
-                    tls:
-                        process.env.REDIS_TLS === 'true'
-                            ? {
-                                  cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
-                                  key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
-                                  ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined
-                              }
-                            : undefined,
-                    keepAlive:
-                        process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
-                            ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
-                            : undefined
+                client = new Redis({
+                    ...redisNode,
+                    ...redisOptions,
                 })
             }
-            this.queueEventsProducer = new QueueEventsProducer(QUEUE_NAME, { connection: this.getConnection() })
-            this.queueEvents = new QueueEvents(QUEUE_NAME, { connection: this.getConnection() })
+        } else {
+            client = new Redis(process.env.REDIS_URL, {
+                keepAlive:
+                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+                        : undefined
+            })
         }
+        this.redisClient = client
+        this.queueEventsProducer = new QueueEventsProducer(QUEUE_NAME, { connection: this.getConnection() })
+        this.queueEvents = new QueueEvents(QUEUE_NAME, { connection: this.getConnection() })
     }
 
     getConnection() {
@@ -65,7 +83,7 @@ export class RateLimiterManager {
             tlsOpts = {
                 cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
                 key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
-                ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined
+                ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined,
             }
         }
         return {

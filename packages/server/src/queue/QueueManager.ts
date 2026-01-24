@@ -6,14 +6,16 @@ import { IComponentNodes } from '../Interface'
 import { Telemetry } from '../utils/telemetry'
 import { CachePool } from '../CachePool'
 import { DataSource } from 'typeorm'
+import { Redis, Cluster } from 'ioredis'
 import { AbortControllerPool } from '../AbortControllerPool'
-import { QueueEventsProducer, RedisOptions } from 'bullmq'
+import { QueueEventsProducer, ConnectionOptions } from 'bullmq'
 import { createBullBoard } from '@bull-board/api'
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter'
 import { Express } from 'express'
 import { UsageCacheManager } from '../UsageCacheManager'
 import { ExpressAdapter } from '@bull-board/express'
 import { IdentityManager } from '../IdentityManager'
+import logger from '../utils/logger'
 
 const QUEUE_NAME = process.env.QUEUE_NAME || 'flowise-queue'
 
@@ -22,55 +24,69 @@ type QUEUE_TYPE = 'prediction' | 'upsert' | 'schedule'
 export class QueueManager {
     private static instance: QueueManager
     private queues: Map<string, BaseQueue> = new Map()
-    private connection: RedisOptions
+    private connection: ConnectionOptions
     private bullBoardRouter?: Express
     private predictionQueueEventsProducer?: QueueEventsProducer
 
     private constructor() {
-        if (process.env.REDIS_URL) {
-            let tlsOpts = undefined
-            if (process.env.REDIS_URL.startsWith('rediss://')) {
-                tlsOpts = {
-                    rejectUnauthorized: false
-                }
-            } else if (process.env.REDIS_TLS === 'true') {
-                tlsOpts = {
-                    cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
-                    key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
-                    ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined
-                }
-            }
-            this.connection = {
-                url: process.env.REDIS_URL,
-                tls: tlsOpts,
-                enableReadyCheck: true,
-                keepAlive:
-                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
-                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
-                        : undefined
-            }
-        } else {
-            let tlsOpts = undefined
-            if (process.env.REDIS_TLS === 'true') {
-                tlsOpts = {
-                    cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
-                    key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
-                    ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined
-                }
-            }
-            this.connection = {
-                host: process.env.REDIS_HOST || 'localhost',
+        let client: Redis | Cluster
+        if (!process.env.REDIS_URL) {
+            const redisNode = {
                 port: parseInt(process.env.REDIS_PORT || '6379'),
+                host: process.env.REDIS_HOST || 'localhost',
+            }
+            const sslEnabled = process.env.REDIS_TLS === 'true'
+            const tlsOptions = sslEnabled ? {
+                tls: {
+                    rejectUnauthorized: false,
+                    cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
+                    key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
+                    ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined,
+                }
+            } : {}
+            const redisOptions = {
                 username: process.env.REDIS_USERNAME || undefined,
                 password: process.env.REDIS_PASSWORD || undefined,
-                tls: tlsOpts,
+                maxRetriesPerRequest: null, // required by bullmq
+                enableReadyCheck: true,
+                keepAlive:
+                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+                        : undefined,
+                ...tlsOptions
+            }
+            const clusterMode = process.env.REDIS_CLUSTER === 'true'
+            logger.info(
+                `[QueueManager] Connecting to Redis${clusterMode ? ' Cluster' : ''} using host:port: ${
+                    process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || '6379'}`
+            )
+            if (clusterMode) {
+                client = new Cluster(
+                    [redisNode],
+                    {redisOptions},
+                )
+            } else {
+                client = new Redis({
+                    ...redisNode,
+                    ...redisOptions,
+                })
+            }
+        } else {
+            logger.info(
+                `[QueueManager] Connecting to Redis using URL: ${process.env.REDIS_URL.replace(/\/\/[^:]+:[^@]+@/, '//[CREDENTIALS]@')}`
+            )
+            client = new Redis(process.env.REDIS_URL, {
+                maxRetriesPerRequest: null, // required by bullmq
                 enableReadyCheck: true,
                 keepAlive:
                     process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
                         ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
                         : undefined
-            }
+            })
         }
+        // bullmq ConnectionOptions can be options object or client instance:
+        // https://api.docs.bullmq.io/types/v5.ConnectionOptions.html
+        this.connection = client as ConnectionOptions;
     }
 
     public static getInstance(): QueueManager {
@@ -84,7 +100,7 @@ export class QueueManager {
         this.queues.set(name, queue)
     }
 
-    public getConnection() {
+    public getConnection(): ConnectionOptions {
         return this.connection
     }
 

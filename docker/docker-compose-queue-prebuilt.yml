@@ -30,8 +30,10 @@ services:
             - DATABASE_NAME=${DATABASE_NAME}
             - DATABASE_USER=${DATABASE_USER}
             - DATABASE_PASSWORD=${DATABASE_PASSWORD}
-            - DATABASE_SSL=${DATABASE_SSL}
-            - DATABASE_SSL_KEY_BASE64=${DATABASE_SSL_KEY_BASE64}
+            - DATABASE_TLS=${DATABASE_TLS}
+            - DATABASE_CERT=${DATABASE_CERT}
+            - DATABASE_KEY=${DATABASE_KEY}
+            - DATABASE_CA=${DATABASE_CA}
 
             # SECRET KEYS
             - SECRETKEY_STORAGE_TYPE=${SECRETKEY_STORAGE_TYPE}
@@ -142,6 +144,7 @@ services:
             - REDIS_URL=${REDIS_URL:-redis://redis:6379}
             - REDIS_HOST=${REDIS_HOST}
             - REDIS_PORT=${REDIS_PORT}
+            - REDIS_CLUSTER=${REDIS_CLUSTER}
             - REDIS_USERNAME=${REDIS_USERNAME}
             - REDIS_PASSWORD=${REDIS_PASSWORD}
             - REDIS_TLS=${REDIS_TLS}
@@ -192,8 +195,10 @@ services:
             - DATABASE_NAME=${DATABASE_NAME}
             - DATABASE_USER=${DATABASE_USER}
             - DATABASE_PASSWORD=${DATABASE_PASSWORD}
-            - DATABASE_SSL=${DATABASE_SSL}
-            - DATABASE_SSL_KEY_BASE64=${DATABASE_SSL_KEY_BASE64}
+            - DATABASE_TLS=${DATABASE_TLS}
+            - DATABASE_CERT=${DATABASE_CERT}
+            - DATABASE_KEY=${DATABASE_KEY}
+            - DATABASE_CA=${DATABASE_CA}
 
             # SECRET KEYS
             - SECRETKEY_STORAGE_TYPE=${SECRETKEY_STORAGE_TYPE}
@@ -298,6 +303,7 @@ services:
             - REDIS_URL=${REDIS_URL:-redis://redis:6379}
             - REDIS_HOST=${REDIS_HOST}
             - REDIS_PORT=${REDIS_PORT}
+            - REDIS_CLUSTER=${REDIS_CLUSTER}
             - REDIS_USERNAME=${REDIS_USERNAME}
             - REDIS_PASSWORD=${REDIS_PASSWORD}
             - REDIS_TLS=${REDIS_TLS}

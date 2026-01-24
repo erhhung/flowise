@@ -1,4 +1,4 @@
-import { Redis, RedisOptions } from 'ioredis'
+import { Redis, Cluster, RedisOptions } from 'ioredis'
 import { BufferMemory, BufferMemoryInput } from '@langchain/classic/memory'
 import { mapStoredMessageToChatMessage, BaseMessage, AIMessage, HumanMessage } from '@langchain/core/messages'
 import { INode, INodeData, INodeParams, ICommonObject, MessageType, IMessage, MemoryMethods, FlowiseMemory } from '../../../src/Interface'
@@ -90,6 +90,15 @@ const initializeRedis = async (nodeData: INodeData, options: ICommonObject): Pro
     const redisUrl = getCredentialParam('redisUrl', credentialData, nodeData)
     const orgId = options.orgId as string
 
+    const sslEnabled = process.env.REDIS_TLS === 'true'
+    const tlsOptions = sslEnabled ? {
+        tls: {
+            rejectUnauthorized: false,
+            cert: process.env.REDIS_CERT ? Buffer.from(process.env.REDIS_CERT, 'base64') : undefined,
+            key: process.env.REDIS_KEY ? Buffer.from(process.env.REDIS_KEY, 'base64') : undefined,
+            ca: process.env.REDIS_CA ? Buffer.from(process.env.REDIS_CA, 'base64') : undefined,
+        }
+    } : {}
     const redisOptions = redisUrl
         ? redisUrl
         : ({
@@ -97,7 +106,8 @@ const initializeRedis = async (nodeData: INodeData, options: ICommonObject): Pro
               host: getCredentialParam('redisCacheHost', credentialData, nodeData),
               username: getCredentialParam('redisCacheUser', credentialData, nodeData),
               password: getCredentialParam('redisCachePwd', credentialData, nodeData),
-              tls: getCredentialParam('redisCacheSslEnabled', credentialData, nodeData) ? { rejectUnauthorized: false } : undefined
+              // tls: getCredentialParam('redisCacheSslEnabled', credentialData, nodeData) ? { rejectUnauthorized: false } : undefined,
+              ...tlsOptions,
           } as RedisOptions)
 
     const memory = new BufferMemoryExtended({
@@ -136,22 +146,42 @@ class BufferMemoryExtended extends FlowiseMemory implements MemoryMethods {
         this.redisOptions = fields.redisOptions
     }
 
-    private async withRedisClient<T>(fn: (client: Redis) => Promise<T>): Promise<T> {
-        const client =
-            typeof this.redisOptions === 'string'
-                ? new Redis(this.redisOptions, {
-                      keepAlive:
-                          process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
-                              ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
-                              : undefined
-                  })
-                : new Redis({
-                      ...this.redisOptions,
-                      keepAlive:
-                          process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
-                              ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
-                              : undefined
-                  })
+    private async withRedisClient<T>(fn: (client: Redis | Cluster) => Promise<T>): Promise<T> {
+        let client: Redis | Cluster
+        if (typeof this.redisOptions !== 'string') {
+            const redisNode = {
+                port: this.redisOptions.port,
+                host: this.redisOptions.host,
+            }
+            const redisOptions = {
+                username: this.redisOptions.username,
+                password: this.redisOptions.password,
+                tls: this.redisOptions?.tls,
+                keepAlive:
+                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+                        : undefined,
+            }
+            if (process.env.REDIS_CLUSTER === 'true') {
+                client = new Cluster(
+                    [redisNode],
+                    {redisOptions},
+                )
+            } else {
+                client = new Redis({
+                    ...redisNode,
+                    ...redisOptions,
+                })
+            }
+        } else {
+            const redisUrl = this.redisOptions as string
+            client = new Redis(redisUrl, {
+                keepAlive:
+                    process.env.REDIS_KEEP_ALIVE && !isNaN(parseInt(process.env.REDIS_KEEP_ALIVE, 10))
+                        ? parseInt(process.env.REDIS_KEEP_ALIVE, 10)
+                        : undefined
+            })
+        }
         try {
             return await fn(client)
         } finally {
