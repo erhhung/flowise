@@ -1,0 +1,97 @@
+spec:
+    # https://docs.gitlab.com/18.3/ci/inputs
+    inputs:
+        purpose:
+            description: Select the purpose of this pipeline
+            options:
+                - build-deploy # normally triggered pipelines
+                - pull-upstream # scheduled recurring pipeline
+            default: build-deploy
+---
+# Bash helper functions automatically sourced when runner build pod starts:
+# https://github.com/erhhung/homelab-k8s/tree/main/files/gitlab/ciutils.sh
+
+.sync:
+    script:
+        - '# ========== .sync =========='
+        - git remote add upstream $UPSTREAM
+        - git fetch upstream
+        - if git merge --ff-only upstream/$CI_COMMIT_BRANCH; then
+        - - '# No upstream changes to merge.'
+          - exit 0
+        - fi
+        - git merge upstream/$CI_COMMIT_BRANCH
+        - git add .
+        - git config user.name gitlab-ci
+        - 'git commit -m "chore: pull upstream changes"'
+        - git push origin HEAD:$CI_COMMIT_BRANCH
+
+.setup:
+    script:
+        - '# ========== .setup =========='
+        - buildah_login
+
+.build:
+    script:
+        - !reference [.setup, script]
+        - '# ========== .build =========='
+        - image="$IMAGE_NAME"
+        - buildah_build $image --no-cache -f ./Dockerfile .
+        - buildah_push  $image $CI_COMMIT_SHORT_SHA
+
+        - image="${IMAGE_NAME}-worker"
+        - buildah_build $image -f ./docker/worker/Dockerfile .
+        - buildah_push  $image $CI_COMMIT_SHORT_SHA
+
+.deploy:
+    script:
+        - '# ========== .deploy =========='
+        - component="$IMAGE_NAME"
+        - image="$CI_REGISTRY_PATH/$component:$CI_COMMIT_SHORT_SHA"
+        - set_k8s_image Deployment $NAMESPACE $component initContainer update-ca-bundle $image
+        - set_k8s_image Deployment $NAMESPACE $component container flowise $image
+        - kubectl rollout restart Deployment -n $NAMESPACE $component
+
+        - component="${IMAGE_NAME}-worker"
+        - image="$CI_REGISTRY_PATH/$component:$CI_COMMIT_SHORT_SHA"
+        - set_k8s_image Deployment $NAMESPACE $component initContainer update-ca-bundle $image
+        - set_k8s_image Deployment $NAMESPACE $component container worker $image
+        - kubectl rollout restart Deployment -n $NAMESPACE $component
+
+variables:
+    UPSTREAM: https://github.com/erhhung/flowise.git
+    IMAGE_NAME: flowise
+    NAMESPACE: flowise
+    # CI_DEBUG: 600
+
+stages:
+    - sync
+    - build
+    - deploy
+
+# ==================== SYNC STAGE ====================
+
+sync:
+    stage: sync
+    extends: .sync
+    needs: []
+    rules:
+        - if: '"$[[ inputs.purpose ]]" == "pull-upstream"'
+
+# ==================== BUILD STAGE ====================
+
+build:
+    stage: build
+    extends: .build
+    needs: []
+    rules:
+        - if: '"$[[ inputs.purpose ]]" == "build-deploy"'
+
+# ==================== DEPLOY STAGE ====================
+
+deploy:
+    stage: deploy
+    extends: .deploy
+    needs: ['build']
+    rules:
+        - if: '"$[[ inputs.purpose ]]" == "build-deploy"'
