@@ -1,0 +1,14 @@
+# https://buildkite.com/docs/pipelines/configure/defining-steps#step-defaults
+agents:
+    queue: kubernetes
+env:
+    # `$GIT_COMMIT_SHORT_SHA` is set by
+    # agent pod /ci/scripts/ci-utils.sh
+    IMAGE_NAME: flowise
+    NAMESPACE: flowise
+
+steps:
+    - label: ':hammer: Build'
+      command: .buildkite/build.sh
+    - label: ':kubernetes: Deploy'
+      command: .buildkite/deploy.sh
