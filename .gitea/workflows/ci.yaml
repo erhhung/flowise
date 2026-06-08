@@ -1,0 +1,77 @@
+name: CI Pipeline
+
+on:
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#push
+    push:
+        branches:
+            - gitea-ci
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch
+    workflow_dispatch: # allow manual trigger
+
+env:
+    IMAGE_NAME: flowise
+    NAMESPACE: flowise
+    # CI_DEBUG: 600
+
+defaults:
+    run:
+        shell: bash
+
+# https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+jobs:
+    build:
+        # run directly in the runner container in host mode
+        # so that `dind` container won't have to separately
+        # repull al2023-devops image that's already on host
+        runs-on: al2023-devops
+        steps:
+            # https://github.com/actions/checkout
+            - name: Check out Git Repo
+              id: checkout
+              uses: actions/checkout@v6
+
+            # https://github.com/erhhung/homelab-k8s/tree/main/files/gitea/runner/ciutils.sh
+            - name: Log in to Registry
+              id: login
+              run: buildah_login
+
+            - name: Build flowise Image
+              run: |
+                  export_env COMPONENT $IMAGE_NAME
+                  buildah_build $COMPONENT --no-cache -f ./Dockerfile .
+
+            - name: Push flowise Image
+              run: buildah_push $COMPONENT $GIT_COMMIT_SHORT_SHA
+
+            - name: Build flowise-worker Image
+              run: |
+                  export_env COMPONENT $IMAGE_NAME-worker
+                  buildah_build $COMPONENT -f ./docker/worker/Dockerfile .
+
+            - name: Push flowise-worker Image
+              run: buildah_push $COMPONENT $GIT_COMMIT_SHORT_SHA
+
+    deploy:
+        runs-on: al2023-devops
+        needs: build
+        steps:
+            - name: Prepare to Deploy
+              id: prepare
+              run: '# no-op'
+
+            # Gitea Actions does not support
+            # variable expansion in step name
+            - name: Deploy flowise
+              env:
+                  COMPONENT: flowise
+              # https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#yaml-anchors-and-aliases
+              run: &deployment |
+                  IMAGE="$CI_REGISTRY_PATH/$COMPONENT:$GIT_COMMIT_SHORT_SHA"
+                  set_k8s_image Deployment $NAMESPACE $COMPONENT initContainer update-ca-bundle $IMAGE
+                  set_k8s_image Deployment $NAMESPACE $COMPONENT     container ${COMPONENT#*-}  $IMAGE
+                  kubectl rollout restart Deployment -n $NAMESPACE $COMPONENT
+
+            - name: Deploy flowise-worker
+              env:
+                  COMPONENT: flowise-worker
+              run: *deployment
